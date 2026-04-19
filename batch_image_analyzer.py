@@ -24,8 +24,10 @@ except ImportError:
 
 
 # ============ 設定區 ============
-OLLAMA_API = "http://ollama:11434/api/chat"
-MODEL_NAME = "moondream"
+# 可透過環境變數 OLLAMA_API, MODEL_NAME 覆寫
+# 或命令列引數 --ollama-api, --model
+OLLAMA_API = os.environ.get("OLLAMA_API", "http://ollama:11434/api/chat")
+MODEL_NAME = os.environ.get("MODEL_NAME", "moondream")
 # ================================
 
 
@@ -130,7 +132,16 @@ def main():
                         help="僅分析，不寫入 EXIF")
     parser.add_argument("--output", "-o", default="analysis_result.json",
                         help="結果輸出檔案 (預設: analysis_result.json)")
+    parser.add_argument("--ollama-api", default=OLLAMA_API,
+                        help=f"Ollama API URL (預設: {OLLAMA_API})")
+    parser.add_argument("--model", "-m", default=MODEL_NAME,
+                        help=f"模型名稱 (預設: {MODEL_NAME})")
     args = parser.parse_args()
+
+    # 更新全域設定（支援 CLI 覆寫環境變數）
+    global OLLAMA_API, MODEL_NAME
+    OLLAMA_API = args.ollama_api
+    MODEL_NAME = args.model
 
     # 掃描圖片
     print(f"🔍 掃描資料夾: {args.folder}")

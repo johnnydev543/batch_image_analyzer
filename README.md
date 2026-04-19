@@ -24,6 +24,29 @@ pip install piexif
 
 ## 使用方式
 
+### 環境變數（推薦）
+
+```bash
+# 設定 API 位址
+export OLLAMA_API=http://my-custom-host:11434/api/chat
+export MODEL_NAME=moondream
+
+# 執行
+python3 batch_image_analyzer.py ~/sshd/data/pics/test/ --dry-run
+```
+
+### 命令列引數
+
+```bash
+# 直接指定
+python3 batch_image_analyzer.py ~/sshd/data/pics/test/ \
+  --ollama-api http://my-custom-host:11434/api/chat \
+  --model moondream \
+  --dry-run
+```
+
+### 全部範例
+
 ```bash
 # 基本用法（分析並寫入 EXIF）
 python3 batch_image_analyzer.py /path/to/photos
@@ -63,13 +86,11 @@ python3 batch_image_analyzer.py /path/to/photos -o my_results.json
 - `UserComment` (0th, tag 37510): 圖片描述
 - `DateTime` (0th, tag 306): 處理時間
 
-## API 端點
+## 設定優先順序
 
-使用 Ollama 的 `/api/chat` 端點，模型為 `moondream`。
+命令行引數 > 環境變數 > 預設值
 
-```python
-OLLAMA_API = "http://ollama:11434/api/chat"
-MODEL_NAME = "moondream"
-```
-
-> ⚠️ 預設使用 `http://ollama:11434`，若你的 Ollama 在不同位置，請修改腳本內的 `OLLAMA_API`。
+| 設定方式 | 環境變數 | 命令列引數 |
+|----------|----------|------------|
+| API URL | `OLLAMA_API` | `--ollama-api` |
+| 模型名稱 | `MODEL_NAME` | `--model`, `-m` |
