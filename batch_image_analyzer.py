@@ -26,8 +26,8 @@ except ImportError:
 # ============ 設定區 ============
 # 可透過環境變數 OLLAMA_API, MODEL_NAME 覆寫
 # 或命令列引數 --ollama-api, --model
-OLLAMA_API = os.environ.get("OLLAMA_API", "http://ollama:11434/api/chat")
-MODEL_NAME = os.environ.get("MODEL_NAME", "moondream")
+DEFAULT_OLLAMA_API = os.environ.get("OLLAMA_API", "http://ollama:11434/api/chat")
+DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", "moondream")
 # ================================
 
 
@@ -37,12 +37,12 @@ def encode_image(image_path: str) -> str:
         return base64.b64encode(f.read()).decode()
 
 
-def analyze_image(image_path: str) -> str:
+def analyze_image(image_path: str, ollama_api: str, model_name: str) -> str:
     """送圖片到 Moondream，取得描述"""
     img_b64 = encode_image(image_path)
 
     payload = {
-        "model": MODEL_NAME,
+        "model": model_name,
         "messages": [
             {"role": "user", "content": "", "images": [img_b64]}
         ],
@@ -51,7 +51,7 @@ def analyze_image(image_path: str) -> str:
 
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        OLLAMA_API,
+        ollama_api,
         data=data,
         headers={"Content-Type": "application/json"}
     )
@@ -87,14 +87,14 @@ def write_exif_usercomment(image_path: str, description: str) -> bool:
         return False
 
 
-def process_image(image_path: str, dry_run: bool = False) -> dict:
+def process_image(image_path: str, dry_run: bool, ollama_api: str, model_name: str) -> dict:
     """處理單張圖片"""
     print(f"\n📷 處理中: {image_path}")
 
     try:
         # 1. 分析圖片
         print(f"  🔍 正在分析圖片...")
-        description = analyze_image(image_path)
+        description = analyze_image(image_path, ollama_api, model_name)
         print(f"  📝 描述: {description[:100]}{'...' if len(description) > 100 else ''}")
 
         # 2. 寫入 EXIF
@@ -132,16 +132,14 @@ def main():
                         help="僅分析，不寫入 EXIF")
     parser.add_argument("--output", "-o", default="analysis_result.json",
                         help="結果輸出檔案 (預設: analysis_result.json)")
-    parser.add_argument("--ollama-api", default=OLLAMA_API,
-                        help=f"Ollama API URL (預設: {OLLAMA_API})")
-    parser.add_argument("--model", "-m", default=MODEL_NAME,
-                        help=f"模型名稱 (預設: {MODEL_NAME})")
+    parser.add_argument("--ollama-api", default=DEFAULT_OLLAMA_API,
+                        help=f"Ollama API URL (預設: {DEFAULT_OLLAMA_API})")
+    parser.add_argument("--model", "-m", default=DEFAULT_MODEL_NAME,
+                        help=f"模型名稱 (預設: {DEFAULT_MODEL_NAME})")
     args = parser.parse_args()
 
-    # 更新全域設定（支援 CLI 覆寫環境變數）
-    global OLLAMA_API, MODEL_NAME
-    OLLAMA_API = args.ollama_api
-    MODEL_NAME = args.model
+    ollama_api = args.ollama_api
+    model_name = args.model
 
     # 掃描圖片
     print(f"🔍 掃描資料夾: {args.folder}")
@@ -156,7 +154,7 @@ def main():
     results = []
     for i, img_path in enumerate(images, 1):
         print(f"\n[{i}/{len(images)}]", end="")
-        result = process_image(str(img_path), dry_run=args.dry_run)
+        result = process_image(str(img_path), dry_run=args.dry_run, ollama_api=ollama_api, model_name=model_name)
         results.append(result)
 
     # 輸出結果
