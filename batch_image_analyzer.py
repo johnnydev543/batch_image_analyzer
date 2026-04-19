@@ -37,14 +37,19 @@ def encode_image(image_path: str) -> str:
         return base64.b64encode(f.read()).decode()
 
 
-def analyze_image(image_path: str, ollama_api: str, model_name: str) -> str:
-    """送圖片到 Moondream，取得描述"""
+def analyze_image(image_path: str, ollama_api: str, model_name: str, extract_keywords: bool = False) -> str:
+    """送圖片到 Moondream，取得描述或關鍵字"""
     img_b64 = encode_image(image_path)
+
+    if extract_keywords:
+        prompt = "List the main keywords or tags for this image, separated by commas. Only output keywords, no full sentences."
+    else:
+        prompt = ""
 
     payload = {
         "model": model_name,
         "messages": [
-            {"role": "user", "content": "", "images": [img_b64]}
+            {"role": "user", "content": prompt, "images": [img_b64]}
         ],
         "stream": False
     }
@@ -87,14 +92,14 @@ def write_exif_usercomment(image_path: str, description: str) -> bool:
         return False
 
 
-def process_image(image_path: str, dry_run: bool, ollama_api: str, model_name: str) -> dict:
+def process_image(image_path: str, dry_run: bool, ollama_api: str, model_name: str, extract_keywords: bool) -> dict:
     """處理單張圖片"""
     print(f"\n📷 處理中: {image_path}")
 
     try:
         # 1. 分析圖片
         print(f"  🔍 正在分析圖片...")
-        description = analyze_image(image_path, ollama_api, model_name)
+        description = analyze_image(image_path, ollama_api, model_name, extract_keywords)
         print(f"  📝 描述: {description[:100]}{'...' if len(description) > 100 else ''}")
 
         # 2. 寫入 EXIF
@@ -136,10 +141,13 @@ def main():
                         help=f"Ollama API URL (預設: {DEFAULT_OLLAMA_API})")
     parser.add_argument("--model", "-m", default=DEFAULT_MODEL_NAME,
                         help=f"模型名稱 (預設: {DEFAULT_MODEL_NAME})")
+    parser.add_argument("--keywords", "-k", action="store_true",
+                        help="只輸出關鍵字標籤，不輸出完整描述")
     args = parser.parse_args()
 
     ollama_api = args.ollama_api
     model_name = args.model
+    extract_keywords = args.keywords
 
     # 掃描圖片
     print(f"🔍 掃描資料夾: {args.folder}")
@@ -154,7 +162,7 @@ def main():
     results = []
     for i, img_path in enumerate(images, 1):
         print(f"\n[{i}/{len(images)}]", end="")
-        result = process_image(str(img_path), dry_run=args.dry_run, ollama_api=ollama_api, model_name=model_name)
+        result = process_image(str(img_path), dry_run=args.dry_run, ollama_api=ollama_api, model_name=model_name, extract_keywords=extract_keywords)
         results.append(result)
 
     # 輸出結果
