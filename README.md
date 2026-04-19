@@ -6,9 +6,10 @@
 
 - 🔍 批次掃描資料夾內的圖片
 - 🤖 使用 Moondream 模型分析圖片取得描述
-- 🏷️ 從描述自動抽取英中對照關鍵字（不需要二次 AI 推理）
+- 🏷️ 從描述自動抽取英中對照關鍵字
 - 📝 將描述與關鍵字寫入 EXIF UserComment
 - 📄 結果輸出為 JSON manifest
+- ☁️ 支援 Google Drive 掛載資料夾
 
 ## 需求
 
@@ -50,8 +51,13 @@ python3 batch_image_analyzer.py ~/sshd/data/pics/test/ \
 python3 batch_image_analyzer.py ~/sshd/data/pics/test/ --extensions jpg png webp
 
 # 指定輸出檔名
-python3 batch_image_analyzer.py ~/sshd/data/pics/test/ -o my_results.json
+python3 batch_image_analyzer.py ~/sshd/data/pics/test/ -o custom_results.json
 ```
+
+## 輸出位置
+
+- **結果 JSON**：預設放在圖片資料夾底下，命名為 `analysis_result.json`
+- **EXIF**：直接寫入每張圖片檔案
 
 ## EXIF 輸出格式
 
@@ -85,17 +91,23 @@ EXIF UserComment 寫入內容：
 | API URL | `OLLAMA_API` | `--ollama-api` |
 | 模型名稱 | `MODEL_NAME` | `--model`, `-m` |
 
-## 支援的關鍵字類別
+## 自訂關鍵字翻譯
 
-- 動物（貓、狗、鳥、魚等）
-- 人（男人、女人、小孩、人群等）
-- 交通工具（腳踏車、汽車、公車、飛機等）
-- 建築與場景（房屋、橋、道路、公園等）
-- 自然景觀（山、海、樹、花、天空等）
-- 室內與物品（家具、電器、書籍等）
-- 食物與飲料
-- 活動與事件
-- 顏色、形狀、材質
-- 情緒與氛圍
-- 日常物品
-- 公共設施
+修改 `keywords.py` 檔案即可新增或編輯關鍵字對照。
+
+## Google Drive 支援
+
+直接指定 Google Drive 掛載路徑即可：
+```bash
+python3 batch_image_analyzer.py ~/Google\ Drive/My\ Drive/Photos/
+```
+
+## 資料夾結構
+
+```
+batch_image_analyzer/
+├── batch_image_analyzer.py   # 主程式
+├── keywords.py              # 關鍵字對照表（可自行編輯）
+├── README.md                # 說明文件
+└── .gitignore              # Git 忽略設定
+```
