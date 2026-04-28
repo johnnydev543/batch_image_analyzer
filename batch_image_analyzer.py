@@ -309,7 +309,10 @@ def process_image(
                 # 要求關鍵字模式
                 if content and len(content.strip()) > 5:
                     print(f"  📝 關鍵字: {content}")
-                    en_kw = [k.strip() for k in content.split(",") if k.strip()]
+                    raw_kw = [k.strip() for k in content.split(",") if k.strip()]
+                    # 自動偵測中英文，分開寫入
+                    en_kw = [k for k in raw_kw if re.search(r'[a-zA-Z]', k)]
+                    zh_kw = [k for k in raw_kw if re.search(r'[\u4e00-\u9fa5]', k)]
                     description = content
                 elif reasoning:
                     print(f"  📝 從推理過程解析...")
