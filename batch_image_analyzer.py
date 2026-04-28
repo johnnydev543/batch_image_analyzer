@@ -7,23 +7,21 @@
 1. 支援 Google Drive 連結下載
 2. 使用 Moondream 或 Qwen3-VL 分析圖片
 3. 可選：要求模型輸出關鍵字，或從描述自動抽取
-4. 輸出結果為 JSON manifest
+4. 支援自訂 prompt
+5. 輸出結果為 JSON manifest
 
 用法:
     # Moondream 模式（預設），只做描述分析
     python3 batch_image_analyzer.py ~/photos/
 
-    # Moondream 模式，開啟關鍵字抽取（5 個）
-    python3 batch_image_analyzer.py ~/photos/ --keywords
+    # Qwen3-VL 模式（自動偵測）
+    python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b
 
-    # Moondream 模式，指定關鍵字數量
+    # 自訂 prompt
+    python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b --prompt "用繁體中文描述這張圖片"
+
+    # 開啟關鍵字
     python3 batch_image_analyzer.py ~/photos/ --keywords 8
-
-    # Qwen3-VL 模式（自動偵測），要求關鍵字輸出
-    python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b --keywords 5
-
-    # Qwen3-VL + 高解析度
-    python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b --keywords --detail high
 """
 
 import os
@@ -144,6 +142,7 @@ def analyze_image_qwen(
     mime: str,
     ollama_api: str,
     model_name: str,
+    prompt: str = None,
     ask_keywords: bool = False,
     num_keywords: int = 5,
     detail: str = "low"
@@ -151,32 +150,18 @@ def analyze_image_qwen(
     """
     Qwen3-VL 模型分析（V1 Chat Completions API）
     回傳 (內容, 推理過程)
-
-    Args:
-        img_b64: base64 編碼的圖片
-        mime: MIME 類型
-        ollama_api: API 端點
-        model_name: 模型名稱
-        ask_keywords: 是否要求模型輸出關鍵字
-        num_keywords: 要輸出的關鍵字數量
-        detail: 圖片解析度 ("low" | "high" | "auto")
-
-    Returns:
-        (content, reasoning)
     """
-    if ask_keywords:
-        prompt = f"輸出{num_keywords}個關鍵字，逗號分隔，別解釋。"
-    else:
-        prompt = "詳細描述這張圖片的內容。"
+    # 組裝 content 陣列（text 可選，image 必備）
+    content_list = []
+    if prompt:
+        content_list.append({"type": "text", "text": prompt})
+    content_list.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}", "detail": detail}})
 
     payload = {
         "model": model_name,
         "messages": [{
             "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}", "detail": detail}}
-            ]
+            "content": content_list
         }],
         "max_tokens": 1500,
         "stream": False
@@ -290,7 +275,8 @@ def process_image(
     model_type: str,
     use_keywords: bool,
     num_keywords: int,
-    detail: str
+    detail: str,
+    custom_prompt: str = None
 ) -> dict:
     """處理單張圖片"""
     print(f"\n📷 處理中: {image_path}")
@@ -303,8 +289,17 @@ def process_image(
 
         if model_type == "qwen":
             ask_keywords = use_keywords
+            # 決定 prompt
+            if custom_prompt:
+                prompt = custom_prompt
+            elif ask_keywords:
+                prompt = f"輸出{num_keywords}個關鍵字，逗號分隔，別解釋。"
+            else:
+                prompt = None  # Qwen 不需要 prompt
+
             content, reasoning = analyze_image_qwen(
                 img_b64, mime, ollama_api, model_name,
+                prompt=prompt,
                 ask_keywords=ask_keywords,
                 num_keywords=num_keywords,
                 detail=detail
@@ -385,6 +380,8 @@ def main():
                         help=f"Ollama API URL (預設: {DEFAULT_OLLAMA_API})")
     parser.add_argument("--model", "-m", default=DEFAULT_MODEL_NAME,
                         help=f"模型名稱 (預設: {DEFAULT_MODEL_NAME})")
+    parser.add_argument("--prompt", "-p", default=None,
+                        help="自訂 prompt（預設: 描述圖片內容）")
     parser.add_argument("--keywords", "-k", nargs="?", type=int, const=5, default=None,
                         help="開啟關鍵字輸出，可指定數量（預設: 5）。不指定則只做描述分析。")
     parser.add_argument("--detail", choices=["low", "high", "auto"], default="low",
@@ -394,11 +391,14 @@ def main():
     model_type = detect_model_type(args.model)
     use_keywords = args.keywords is not None
     num_keywords = args.keywords if use_keywords else 0
+    custom_prompt = args.prompt
 
     print(f"🔧 設定:")
     print(f"   模型: {args.model}")
     print(f"   類型: {model_type}")
     print(f"   API: {args.ollama_api}")
+    if custom_prompt:
+        print(f"   Prompt: {custom_prompt}")
     if use_keywords:
         print(f"   關鍵字: 開啟 ({num_keywords} 個)")
     else:
@@ -451,7 +451,8 @@ def main():
             model_type=model_type,
             use_keywords=use_keywords,
             num_keywords=num_keywords,
-            detail=args.detail
+            detail=args.detail,
+            custom_prompt=custom_prompt
         )
         results.append(result)
 
