@@ -174,8 +174,8 @@ def analyze_image_qwen(
         "messages": [{
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}", "detail": detail}},
-                {"type": "text", "text": prompt}
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}", "detail": detail}}
             ]
         }],
         "max_tokens": 300,
@@ -190,9 +190,12 @@ def analyze_image_qwen(
     )
 
     with urllib.request.urlopen(req, timeout=120) as response:
-        result = json.loads(response.read().decode("utf-8"))
+        raw = response.read().decode("utf-8")
+        result = json.loads(raw)
+        if "error" in result:
+            raise Exception(f"API Error: {result['error']}")
         msg = result["choices"][0]["message"]
-        content = msg.get("content", "")
+        content = msg.get("content", "") or ""
         reasoning = msg.get("reasoning", "") or ""
         return content, reasoning
 
