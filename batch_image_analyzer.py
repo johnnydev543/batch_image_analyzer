@@ -178,7 +178,7 @@ def analyze_image_qwen(
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}", "detail": detail}}
             ]
         }],
-        "max_tokens": 300,
+        "max_tokens": 1500,
         "stream": False
     }
 
@@ -317,15 +317,13 @@ def process_image(
                     en_kw = [k.strip() for k in content.split(",") if k.strip()]
                     description = content
                 elif reasoning:
-                    print(f"  📝 從推理過程解析關鍵字...")
-                    en_kw = extract_keywords_from_reasoning(reasoning, num_keywords=num_keywords)
-                    print(f"  📝 解析關鍵字: {', '.join(en_kw)}")
-                    description = f"[從推理解析] {reasoning[:100]}..."
+                    print(f"  📝 從推理過程解析...")
+                    description = reasoning
                 else:
                     print(f"  ⚠️  無內容輸出")
             else:
-                # 描述模式
-                description = content or ""
+                # 描述模式：優先取 content，否則用 reasoning
+                description = content.strip() if content.strip() else (reasoning or "")
                 print(f"  📝 描述: {description[:80]}{'...' if len(description) > 80 else ''}")
 
         else:
