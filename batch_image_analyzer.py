@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-批次圖片分析 + EXIF 寫入工具
+批次圖片分析工具
 支援 Ollama Moondream 和 Qwen3-VL 模型
 
 功能：
 1. 支援 Google Drive 連結下載
 2. 使用 Moondream 或 Qwen3-VL 分析圖片
 3. 可選：要求模型輸出關鍵字，或從描述自動抽取
-4. 將描述與關鍵字寫入 EXIF UserComment
-5. Qwen3-VL 模式：自動解析 reasoning 欄位
+4. 輸出結果為 JSON manifest
 
 用法:
     # Moondream 模式（預設），只做描述分析
@@ -36,16 +35,8 @@ import urllib.request
 import argparse
 import subprocess
 from pathlib import Path
-from datetime import datetime
 
 from keywords import KEYWORD_MAP
-
-try:
-    import piexif
-except ImportError:
-    print("⚠️  piexif 未安裝，正在安裝...")
-    os.system("pip install piexif -q")
-    import piexif
 
 
 # ============ 設定區 ============
@@ -289,41 +280,8 @@ def extract_keywords_from_text(text: str) -> tuple[list[str], list[str]]:
     return found_en, found_zh
 
 
-def format_keywords_for_exif(en_keywords: list, zh_keywords: list) -> str:
-    """格式化關鍵字為 EXIF 寫入格式"""
-    en_str = ", ".join(en_keywords) if en_keywords else "N/A"
-    zh_str = ", ".join(zh_keywords) if zh_keywords else "N/A"
-    return f"EN: {en_str} | 中: {zh_str}"
-
-
-def write_exif(image_path: str, description: str, en_keywords: list, zh_keywords: list) -> bool:
-    """將描述和關鍵字寫入圖片的 EXIF"""
-    try:
-        exif_dict = piexif.load(image_path)
-    except ValueError:
-        exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
-
-    keywords_str = format_keywords_for_exif(en_keywords, zh_keywords)
-    full_text = f"{description}\n\n[{keywords_str}]"
-
-    comment_bytes = b"UTF-8\x00\x00\x00" + full_text.encode("utf-8")
-    exif_dict["0th"][37510] = comment_bytes
-
-    now = datetime.now().strftime("%Y:%m:%d %H:%M:%S")
-    exif_dict["0th"][306] = now.encode("utf-8")
-
-    try:
-        exif_bytes = piexif.dump(exif_dict)
-        piexif.insert(exif_bytes, image_path)
-        return True
-    except Exception as e:
-        print(f"  ❌ EXIF 寫入失敗: {e}")
-        return False
-
-
 def process_image(
     image_path: str,
-    dry_run: bool,
     ollama_api: str,
     model_name: str,
     model_type: str,
@@ -376,23 +334,15 @@ def process_image(
                 print(f"  🏷️  正在抽取關鍵字...")
                 en_kw, zh_kw = extract_keywords_from_text(description)
 
-        print(f"      英文標籤: {', '.join(en_kw) if en_kw else '無'}")
-        print(f"      中文標籤: {', '.join(zh_kw) if zh_kw else '無'}")
-
-        if not dry_run:
-            success = write_exif(image_path, description, en_kw, zh_kw)
-            if success:
-                print(f"  ✅ EXIF 已寫入")
-            else:
-                print(f"  ⚠️  跳過 EXIF 寫入")
-        else:
-            print(f"  ⏭️  Dry run: 略過 EXIF 寫入")
+        if use_keywords:
+            print(f"      英文標籤: {', '.join(en_kw) if en_kw else '無'}")
+            print(f"      中文標籤: {', '.join(zh_kw) if zh_kw else '無'}")
 
         return {
             "path": image_path,
             "description": description,
-            "keywords_en": en_kw,
-            "keywords_zh": zh_kw,
+            "keywords_en": en_kw if use_keywords else [],
+            "keywords_zh": zh_kw if use_keywords else [],
             "status": "success"
         }
 
@@ -419,7 +369,7 @@ def scan_images(folder: str, extensions: list) -> list:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="批次圖片分析 + EXIF 寫入工具（支援 Moondream / Qwen3-VL）"
+        description="批次圖片分析工具（支援 Moondream / Qwen3-VL）"
     )
     parser.add_argument("folder", nargs="?", help="要處理的資料夾路徑")
     parser.add_argument("--drive-url", "-d",
@@ -428,8 +378,6 @@ def main():
                         help="資料夾輸出路徑（使用 --drive-url 時為必填）")
     parser.add_argument("--extensions", nargs="+", default=["jpg", "jpeg", "png", "webp"],
                         help="要處理的副檔名 (預設: jpg jpeg png webp)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="僅分析，不寫入 EXIF")
     parser.add_argument("--result-output", default=None,
                         help="結果 JSON 輸出檔案 (預設: <資料夾>/analysis_result.json)")
     parser.add_argument("--ollama-api", default=DEFAULT_OLLAMA_API,
@@ -437,7 +385,7 @@ def main():
     parser.add_argument("--model", "-m", default=DEFAULT_MODEL_NAME,
                         help=f"模型名稱 (預設: {DEFAULT_MODEL_NAME})")
     parser.add_argument("--keywords", "-k", nargs="?", type=int, const=5, default=None,
-                        help="開啟關鍵字輸出，可指定數量（預設: 5）。不指定則不抽取關鍵字。")
+                        help="開啟關鍵字輸出，可指定數量（預設: 5）。不指定則只做描述分析。")
     parser.add_argument("--detail", choices=["low", "high", "auto"], default="low",
                         help="Qwen3-VL 圖片解析度：low=快、high=精細 (預設: low)")
     args = parser.parse_args()
@@ -453,7 +401,7 @@ def main():
     if use_keywords:
         print(f"   關鍵字: 開啟 ({num_keywords} 個)")
     else:
-        print(f"   關鍵字: 關閉")
+        print(f"   關鍵字: 關閉（只做描述分析）")
     if model_type == "qwen":
         print(f"   圖片解析度: {args.detail}")
 
@@ -497,7 +445,6 @@ def main():
         print(f"\n[{i}/{len(images)}]", end="")
         result = process_image(
             str(img_path),
-            dry_run=args.dry_run,
             ollama_api=args.ollama_api,
             model_name=args.model,
             model_type=model_type,
