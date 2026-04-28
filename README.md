@@ -5,12 +5,11 @@
 ## 功能
 
 - 🔍 批次掃描資料夾內的圖片
-- 🤖 支援 Moondream 和 Qwen3-VL 模型
-- 🏷️ 從描述自動抽取英中對照關鍵字
+- 🤖 支援 Moondream 和 Qwen3-VL 模型（自動偵測）
+- 🏷️ 可選：要求模型輸出關鍵字，或從描述自動抽取英中對照關鍵字
 - 📝 將描述與關鍵字寫入 EXIF UserComment
 - 📄 結果輸出為 JSON manifest
 - ☁️ 支援 Google Drive 掛載資料夾
-- ⚡ Qwen3-VL 模式：自動解析 reasoning 欄位輸出關鍵字
 
 ## 需求
 
@@ -24,28 +23,32 @@
 pip install piexif
 ```
 
-## 快速開始
+## 使用方式
 
-### Moondream 模式（預設）
+### 基本用法（只做描述分析）
 
 ```bash
+# Moondream 模式（預設）
 python3 batch_image_analyzer.py ~/photos/
+
+# 指定模型（自動偵測是否為 Qwen3-VL）
+python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b
 ```
 
-### Qwen3-VL 模式
+### 開啟關鍵字抽取
 
 ```bash
-# 基本用法（2B 模型，自動偵測）
-python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b
+# Moondream 模式 + 自動抽取關鍵字（5 個）
+python3 batch_image_analyzer.py ~/photos/ --keywords
 
-# 指定模型類型
-python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:8b --model-type qwen
+# 指定關鍵字數量
+python3 batch_image_analyzer.py ~/photos/ --keywords 8
 
-# 調整輸出關鍵字數量
-python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b --output-length 8
+# Qwen3-VL 模式 + 要求模型直接輸出關鍵字
+python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b --keywords 5
 
-# 高解析度圖片處理（較慢但更精確）
-python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b --detail high
+# Qwen3-VL + 高解析度
+python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b --keywords --detail high
 ```
 
 ## 命令列引數
@@ -53,48 +56,41 @@ python3 batch_image_analyzer.py ~/photos/ --model qwen3-vl:2b --detail high
 | 引數 | 說明 | 預設值 |
 |------|------|--------|
 | `folder` | 要處理的資料夾路徑 | - |
-| `--model`, `-m` | 模型名稱 | `moondream` |
-| `--model-type` | 模型類型：`auto`, `qwen`, `moondream` | `auto` |
-| `--output-length`, `-l` | 輸出的關鍵字數量 | `5` |
+| `--model`, `-m` | 模型名稱（自動偵測類型） | `moondream` |
+| `--keywords`, `-k` | 開啟關鍵字輸出（可指定數量） | 關閉 |
 | `--detail` | Qwen3-VL 圖片解析度：`low`, `high`, `auto` | `low` |
 | `--ollama-api` | Ollama API URL | `http://ollama:11434` |
 | `--dry-run` | 僅分析，不寫入 EXIF | `False` |
-| `--extensions` | 要處理的副檔名 | `jpg png webp` |
+| `--extensions` | 要處理的副檔名 | `jpg jpeg png webp` |
 
-## Qwen3-VL 實用範例
+## 實用範例
 
 ```bash
-# 用 2B 模型快速提取 5 個關鍵字
-python3 batch_image_analyzer.py ./images/ --model qwen3-vl:2b --model-type qwen
+# 快速批次分析（描述模式）
+python3 batch_image_analyzer.py ./photos/
 
-# 用 8B 模型提取 10 個關鍵字（更精確但較慢）
-python3 batch_image_analyzer.py ./images/ --model qwen3-vl:8b --output-length 10
+# 用 2B 模型快速提取關鍵字
+python3 batch_image_analyzer.py ./photos/ --model qwen3-vl:2b --keywords
+
+# 用 2B 模型提取 8 個關鍵字
+python3 batch_image_analyzer.py ./photos/ --model qwen3-vl:2b --keywords 8
 
 # 高解析度模式處理精細圖片
-python3 batch_image_analyzer.py ./images/ --model qwen3-vl:32b --detail high --output-length 8
+python3 batch_image_analyzer.py ./photos/ --model qwen3-vl:8b --keywords --detail high
 
 # 批次處理多個資料夾
 for dir in ./photos/*/; do
-    python3 batch_image_analyzer.py "$dir" --model qwen3-vl:4b
+    python3 batch_image_analyzer.py "$dir" --model qwen3-vl:2b --keywords
 done
 ```
 
-## Qwen3-VL 輸出優化說明
-
-Qwen3-VL 模型會將思考過程放在 `reasoning` 欄位，實際內容放在 `content` 欄位。本工具會自動：
-
-1. 優先使用 `content` 的直接輸出（如有）
-2. 若 `content` 為空，自動解析 `reasoning` 欄位提取關鍵字
-3. 支援透過 `--output-length` 調整輸出數量
-
-### 速度 vs 精確度
+## 速度 vs 精確度（Qwen3-VL）
 
 | 模型 | 速度 | 適用場景 |
 |------|------|----------|
 | `qwen3-vl:2b` | ⚡ 最快 (~2-5s/圖) | 快速篩選、大量圖片 |
 | `qwen3-vl:4b` | ⚡ 快 (~3-7s/圖) | 一般批次處理 |
 | `qwen3-vl:8b` | 🐢 中等 (~5-12s/圖) | 需要較高精確度 |
-| `qwen3-vl:32b` | 🐢 慢 (~15-30s/圖) | 複雜場景、高精度需求 |
 
 ### 解析度設定
 
@@ -102,7 +98,6 @@ Qwen3-VL 模型會將思考過程放在 `reasoning` 欄位，實際內容放在 
 |------|------|----------|
 | `low` | ⚡ 最快 | 文件、截圖、監控畫面 |
 | `high` | 🐢 較慢 | 照片、風景、細節圖片 |
-| `auto` | 🐢 中等 | 不確定圖片類型時 |
 
 ## 環境變數
 
@@ -144,16 +139,6 @@ export MODEL_NAME=qwen3-vl:2b
 python3 batch_image_analyzer.py --drive-url https://drive.google.com/drive/folders/xxxxx -O ~/downloads/photos/
 ```
 
-## 資料夾結構
+## 自訂關鍵字翻譯（僅 Moondream 模式）
 
-```
-batch_image_analyzer/
-├── batch_image_analyzer.py   # 主程式
-├── keywords.py              # 關鍵字對照表
-├── README.md                # 說明文件
-└── .gitignore               # Git 忽略設定
-```
-
-## 自訂關鍵字翻譯
-
-修改 `keywords.py` 檔案即可新增或編輯關鍵字對照（適用於 Moondream 模式）。
+修改 `keywords.py` 檔案即可新增或編輯關鍵字對照。
