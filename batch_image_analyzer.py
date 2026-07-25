@@ -461,59 +461,6 @@ def extract_keywords_from_reasoning(reasoning: str, num_keywords: int = 5) -> li
     return unique[:num_keywords]
 
 
-def parse_free_text_keywords(text: str, num_keywords: int = 15) -> tuple[list[str], list[str]]:
-    """從模型自由生成的描述文字中抽取候選關鍵字（fallback 用）。
-    
-    回傳 (zh_kw, en_kw)
-    策略：抓名詞性短語、列舉項、英文單字
-    """
-    if not text:
-        return [], []
-
-    zh_kw = []
-    en_kw = []
-    seen = set()
-
-    # 排除詞
-    exclude = {
-        "圖片", "图片", "畫面", "画面", "場景", "场景", "這是", "这是",
-        "可以看到", "能看到", "看起來", "看起来", "一個", "一个", "一些",
-        "旁邊", "旁邊的", "遠處", "前面", "後面", "左邊", "右邊", "中間",
-        "上方", "下方", "背景", "前景", "主要", "次要", "似乎", "可能",
-        "應該", "用户", "需要", "輸出", "输出", "關鍵字", "关键词",
-    }
-
-    # 策略1: 中文 2-6 字名詞短語（以逗號/頓號/句號分隔）
-    for chunk in re.split(r'[,，、。.\n；;！!？?]+', text):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        chunk = re.sub(r'^(這是|这是|可以看到|能看到|畫面中|画面中|圖片中|图片中|有一個|有一个|有一些|有|看到|發現|发现)\s*', '', chunk)
-        for m in re.findall(r'[\u4e00-\u9fa5]{2,6}', chunk):
-            key = m.lower()
-            if key in seen or key in exclude:
-                continue
-            seen.add(key)
-            zh_kw.append(m)
-
-    # 策略2: 英文單字（2-20 字母，名詞性）
-    stop_en = {
-        "the", "a", "an", "is", "are", "was", "were", "be", "been",
-        "this", "that", "these", "those", "it", "its", "of", "in", "on",
-        "at", "to", "for", "with", "and", "or", "but", "not", "from",
-        "image", "picture", "photo", "scene", "view", "can", "see",
-        "there", "here", "has", "have", "shown", "shows", "showing",
-    }
-    for m in re.findall(r'\b[a-zA-Z]{2,20}\b', text):
-        key = m.lower()
-        if key in seen or key in stop_en:
-            continue
-        seen.add(key)
-        en_kw.append(key)
-
-    return zh_kw[:num_keywords], en_kw[:num_keywords]
-
-
 def process_image(
     image_path: str,
     ollama_api: str,
@@ -579,13 +526,8 @@ def process_image(
                     api_key=kw_api_key or api_key,
                     num_ctx=num_ctx
                 )
-                # 若模型生成失敗，fallback 到本地抽取
-                if not zh_kw and not en_kw:
-                    print(f"  ⚠️  模型未產出關鍵字，fallback 到本地抽取...")
-                    zh_kw, en_kw = parse_free_text_keywords(description, num_keywords=max(num_keywords, 15))
             else:
-                print(f"  🏷️  未指定關鍵字模型，從描述本地抽取...")
-                zh_kw, en_kw = parse_free_text_keywords(description, num_keywords=max(num_keywords, 15))
+                print(f"  ⚠️  未指定關鍵字模型（--kw-model），略過關鍵字生成")
 
             print(f"      中文標籤: {', '.join(zh_kw) if zh_kw else '無'}")
             print(f"      英文標籤: {', '.join(en_kw) if en_kw else '無'}")
