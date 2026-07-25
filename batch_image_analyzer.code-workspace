@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../reference/test_pics"
+		},
+		{
+			"path": "../reference/test_pics_subset"
+		}
+	],
+	"settings": {}
+}
