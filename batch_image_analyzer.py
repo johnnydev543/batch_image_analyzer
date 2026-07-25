@@ -37,6 +37,7 @@ import urllib.request
 import argparse
 import subprocess
 from pathlib import Path
+from typing import Optional
 from PIL import Image
 import io
 
@@ -148,7 +149,7 @@ def encode_image(image_path: str, max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS) ->
             if max(w, h) > max_pixels:
                 ratio = max_pixels / max(w, h)
                 new_w, new_h = int(w * ratio), int(h * ratio)
-                img = img.resize((new_w, new_h), Image.LANCZOS)
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                 print(f"  📐 圖片已縮圖: {w}x{h} → {new_w}x{new_h}")
             
             # 轉為 JPEG bytes
@@ -172,7 +173,7 @@ def encode_image(image_path: str, max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS) ->
         return b64, mime
 
 
-def analyze_image_moondream(img_b64: str, ollama_api: str, model_name: str, num_ctx: int = DEFAULT_NUM_CTX, api_key: str = None) -> str:
+def analyze_image_moondream(img_b64: str, ollama_api: str, model_name: str, num_ctx: int = DEFAULT_NUM_CTX, api_key: Optional[str] = None) -> str:
     """Moondream 模型分析（舊版 API）"""
     payload = {
         "model": model_name,
@@ -205,12 +206,12 @@ def analyze_image_qwen(
     mime: str,
     ollama_api: str,
     model_name: str,
-    prompt: str = None,
+    prompt: Optional[str] = None,
     ask_keywords: bool = False,
     num_keywords: int = 5,
     detail: str = "low",
     num_ctx: int = DEFAULT_NUM_CTX,
-    api_key: str = None
+    api_key: Optional[str] = None
 ) -> tuple[str, str]:
     """
     Qwen3-VL 模型分析（OpenAI 相容 /v1/chat/completions API）
@@ -273,7 +274,7 @@ def generate_keywords_with_model(
     api_url: str,
     model_name: str,
     num_keywords: int = 15,
-    api_key: str = None,
+    api_key: Optional[str] = None,
     num_ctx: int = DEFAULT_NUM_CTX
 ) -> tuple[list[str], list[str]]:
     """
@@ -371,7 +372,7 @@ def parse_keyword_output(content: str) -> tuple[list[str], list[str]]:
                 key = p.lower()
                 if key in seen:
                     continue
-                if re.search(r'[\u4e00-\u9fa5]') and 1 <= len(p) <= 12:
+                if re.search(r'[\u4e00-\u9fa5]', p) and 1 <= len(p) <= 12:
                     seen.add(key)
                     zh_kw.append(p)
                 elif re.search(r'^[a-zA-Z][a-zA-Z\-]{0,20}$', p):
@@ -521,13 +522,13 @@ def process_image(
     use_keywords: bool,
     num_keywords: int,
     detail: str,
-    custom_prompt: str = None,
+    custom_prompt: Optional[str] = None,
     num_ctx: int = DEFAULT_NUM_CTX,
     max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
-    api_key: str = None,
-    kw_api: str = None,
-    kw_model: str = None,
-    kw_api_key: str = None
+    api_key: Optional[str] = None,
+    kw_api: Optional[str] = None,
+    kw_model: Optional[str] = None,
+    kw_api_key: Optional[str] = None
 ) -> dict:
     """處理單張圖片
     
