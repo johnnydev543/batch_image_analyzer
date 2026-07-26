@@ -13,16 +13,17 @@
 用法:
     # Qwen3-VL 模式 + 關鍵字 pipeline（呼叫另一個 text model 生成關鍵字）
     python3 batch_image_analyzer.py ~/photos/ \\
-        --ollama-api http://localhost:8000/v1 \\
+        --api http://localhost:8000/v1 \\
         --model Qwen3-VL-4B-Instruct-MLX-4bit \\
-        --api-key omlx \\
+        --api-key YOUR_API_KEY \\
         --keywords 20 \\
         --kw-model Qwen3-8B-Instruct-MLX-4bit
 
     # 只做描述分析（不生成關鍵字）
     python3 batch_image_analyzer.py ~/photos/ \\
-        --ollama-api http://localhost:8000/v1 \\
-        --model Qwen3-VL-4B-Instruct-MLX-4bit
+        --api http://localhost:8000/v1 \\
+        --model Qwen3-VL-4B-Instruct-MLX-4bit \\
+        --api-key YOUR_API_KEY
 
     # 開啟關鍵字但只用本地抽取（不呼叫關鍵字模型）
     python3 batch_image_analyzer.py ~/photos/ --keywords 15
@@ -51,10 +52,10 @@ except Exception:
 
 
 # ============ 設定區 ============
-# 沒設定環境變數就為 None（由 argparse 必填或 --model/--ollama-api 指定）
+# 沒設定環境變數就為 None（由 argparse 必填或 --model/--api 指定）
 DEFAULT_MODEL_API = os.environ.get("MODEL_API") or None
 DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME") or None
-DEFAULT_API_KEY = os.environ.get("MODEL_API_KEY") or os.environ.get("OPENAI_API_KEY") or "omlx"
+DEFAULT_API_KEY = os.environ.get("MODEL_API_KEY") or os.environ.get("OPENAI_API_KEY") or None
 # 關鍵字生成模型（另一個 text model），未設定則不生成關鍵字
 DEFAULT_KW_MODEL = os.environ.get("KEYWORD_MODEL") or None
 DEFAULT_KW_API = os.environ.get("KEYWORD_API") or None  # 預設沿用主 API
@@ -609,12 +610,12 @@ def main():
                         help="要處理的副檔名 (預設: jpg jpeg png webp)")
     parser.add_argument("--result-output", default=None,
                         help="結果 JSON 輸出檔案 (預設: <資料夾>/analysis_result.json)")
-    parser.add_argument("--ollama-api", default=DEFAULT_MODEL_API,
-                        help=f"API URL，OpenAI 相容端點基底 (預設: {DEFAULT_MODEL_API or '未設定，必填'}，例如 http://localhost:8000/v1)")
+    parser.add_argument("--api", "--ollama-api", dest="api", default=DEFAULT_MODEL_API,
+                        help=f"API URL，OpenAI 相容端點基底 (預設: {DEFAULT_MODEL_API or '未設定，必填'}，例如 http://localhost:8000/v1)。--ollama-api 為相容別名")
     parser.add_argument("--model", "-m", default=DEFAULT_MODEL_NAME,
                         help=f"模型名稱 (預設: {DEFAULT_MODEL_NAME or '未設定，必填'}，例如 Qwen3-VL-4B-Instruct-MLX-4bit)")
     parser.add_argument("--api-key", default=DEFAULT_API_KEY,
-                        help="API key（預設: omlx 或環境變數 MODEL_API_KEY/OPENAI_API_KEY）")
+                        help="API key（預設: 環境變數 MODEL_API_KEY/OPENAI_API_KEY，未設定則必填）")
     parser.add_argument("--prompt", "-p", default=None,
                         help="自訂 prompt 帶入 VL 模型（可用來控制語言／風格）")
     parser.add_argument("--keywords", "-k", nargs="?", type=int, const=15, default=None,
@@ -622,7 +623,7 @@ def main():
     parser.add_argument("--kw-model", default=DEFAULT_KW_MODEL,
                         help="關鍵字生成模型（另一個 text model），未指定則只從描述本地抽取")
     parser.add_argument("--kw-api", default=DEFAULT_KW_API,
-                        help="關鍵字模型 API URL（預設沿用主 --ollama-api）")
+                        help="關鍵字模型 API URL（預設沿用主 --api）")
     parser.add_argument("--kw-api-key", default=DEFAULT_KW_API_KEY,
                         help="關鍵字模型 API key（預設沿用主 --api-key）")
     parser.add_argument("--detail", choices=["low", "high", "auto"], default="low",
@@ -641,8 +642,8 @@ def main():
     custom_prompt = args.prompt
 
     # 檢查必要參數（環境變數未設定時必須由 CLI 提供）
-    if not args.ollama_api:
-        print("❌ 請指定 API URL，例如 --ollama-api http://localhost:8000/v1")
+    if not args.api:
+        print("❌ 請指定 API URL，例如 --api http://localhost:8000/v1")
         print("   或設定環境變數 MODEL_API")
         return
     if not args.model:
@@ -653,14 +654,14 @@ def main():
     print(f"🔧 設定:")
     print(f"   模型: {args.model}")
     print(f"   類型: {model_type}")
-    print(f"   API: {args.ollama_api}")
+    print(f"   API: {args.api}")
     print(f"   API Key: {'已設定' if args.api_key else '無'}")
     if custom_prompt:
         print(f"   Prompt: {custom_prompt}")
     if use_keywords:
         print(f"   關鍵字 pipeline: 開啟 ({num_keywords} 個)")
         if args.kw_model:
-            print(f"   關鍵字模型: {args.kw_model} @ {args.kw_api or args.ollama_api}")
+            print(f"   關鍵字模型: {args.kw_model} @ {args.kw_api or args.api}")
         else:
             print(f"   關鍵字模型: 未指定（從描述本地抽取）")
     else:
@@ -737,7 +738,7 @@ def main():
         print(f"\n[{i}/{len(images)}]", end="", flush=True)
         result = process_image(
             str(img_path),
-            ollama_api=args.ollama_api,
+            ollama_api=args.api,
             model_name=args.model,
             model_type=model_type,
             use_keywords=use_keywords,

@@ -5,8 +5,8 @@
 ## 流程
 
 ```
-Step 1: batch_image_analyzer.py  →  呼叫 VL 模型分析圖片，產生 analysis_result.json
-Step 2: write_exif.py           →  將指定欄位寫入圖片 EXIF UserComment
+Step 1: batch_image_analyzer.py  →  呼叫 VL 模型分析圖片，產生 analysis_result.json（增量寫入，中斷可續跑）
+Step 2: write_exif.py           →  將指定欄位寫入圖片 EXIF（description→ImageDescription，其他→UserComment）
 ```
 
 ## 功能
@@ -14,8 +14,8 @@ Step 2: write_exif.py           →  將指定欄位寫入圖片 EXIF UserCommen
 - 🔍 批次掃描資料夾內的圖片（jpg / jpeg / png / webp）
 - 🤖 支援 OpenAI 相容 API 的視覺模型（Qwen3-VL 等）
 - 📝 可用 `--prompt` 控制生成語言／風格
-- 🏷️ 關鍵字 pipeline：可選擇呼叫另一個文字模型從描述生成關鍵字，或從描述本地抽取
-- 📄 結果輸出為 JSON manifest
+- 🏷️ 關鍵字 pipeline：可選擇呼叫另一個文字模型從描述生成關鍵字（未指定關鍵字模型則略過）
+- 📄 結果輸出為 JSON manifest（每張完成即增量寫入，中斷後重跑會自動跳過已完成圖片）
 - 🖼️ 將分析結果（描述、關鍵字等）寫入圖片 EXIF，支援 jpg / webp / png
 
 ## 需求
@@ -35,30 +35,30 @@ pip install pillow piexif
 ```bash
 # 基本用法（只做描述分析）
 python3 batch_image_analyzer.py ~/photos/ \
-  --ollama-api http://localhost:8000/v1 \
+  --api http://localhost:8000/v1 \
   --model Qwen3-VL-4B-Instruct-MLX-4bit \
-  --api-key omlx
+  --api-key YOUR_API_KEY
 
 # 用 --prompt 控制生成語言
 python3 batch_image_analyzer.py ~/photos/ \
-  --ollama-api http://localhost:8000/v1 \
+  --api http://localhost:8000/v1 \
   --model Qwen3-VL-4B-Instruct-MLX-4bit \
-  --api-key omlx \
+  --api-key YOUR_API_KEY \
   --prompt "用繁體中文描述這張圖片"
 
 # 開啟關鍵字 pipeline（預設 15 個，呼叫 --kw-model 生成）
 python3 batch_image_analyzer.py ~/photos/ \
-  --ollama-api http://localhost:8000/v1 \
+  --api http://localhost:8000/v1 \
   --model Qwen3-VL-4B-Instruct-MLX-4bit \
-  --api-key omlx \
+  --api-key YOUR_API_KEY \
   --keywords 20 \
   --kw-model Qwen3-8B-Instruct-MLX-4bit
 
-# 開啟關鍵字但只用本地抽取（不呼叫關鍵字模型）
+# 開啟關鍵字 pipeline（預設 15 個，需搭配 --kw-model 生成；未指定 --kw-model 則略過）
 python3 batch_image_analyzer.py ~/photos/ \
-  --ollama-api http://localhost:8000/v1 \
+  --api http://localhost:8000/v1 \
   --model Qwen3-VL-4B-Instruct-MLX-4bit \
-  --api-key omlx \
+  --api-key YOUR_API_KEY \
   --keywords 15
 ```
 
@@ -68,17 +68,21 @@ python3 batch_image_analyzer.py ~/photos/ \
 
 ## Step 2：寫入 EXIF
 
+寫入規則：
+- `description` 欄位 → `ImageDescription` (EXIF tag 270)
+- 其他欄位（keywords、path、status 等）→ `UserComment` (EXIF tag 37510)
+
 ```bash
-# 預設寫入 description
+# 預設寫入 description（→ImageDescription）
 python3 write_exif.py ~/photos/analysis_result.json
 
-# 寫入 description + keywords（keywords 為簡寫，自動合併 keywords_en + keywords_zh）
+# 寫入 description（→ImageDescription）+ keywords（→UserComment）
 python3 write_exif.py ~/photos/analysis_result.json -f description keywords
 
-# 只寫入關鍵字
+# 只寫入關鍵字到 UserComment（不寫 ImageDescription）
 python3 write_exif.py ~/photos/analysis_result.json -f keywords
 
-# 直接使用 JSON 實際欄位名
+# 直接使用 JSON 實際欄位名（都會進 UserComment）
 python3 write_exif.py ~/photos/analysis_result.json -f keywords_en keywords_zh
 
 # 只寫入有 description 的圖片
@@ -94,17 +98,18 @@ python3 write_exif.py ~/photos/analysis_result.json --require-description
 | 引數 | 說明 | 預設值 |
 |------|------|--------|
 | `folder` | 要處理的資料夾路徑 | - |
-| `--ollama-api` | API URL（OpenAI 相容端點基底，如 `http://localhost:8000/v1`） | 環境變數 `MODEL_API`，未設定必填 |
+| `--api` | API URL（OpenAI 相容端點基底，如 `http://localhost:8000/v1`）。`--ollama-api` 為相容別名 | 環境變數 `MODEL_API`，未設定必填 |
 | `--model`, `-m` | 模型名稱 | 環境變數 `MODEL_NAME`，未設定必填 |
-| `--api-key` | API key | `omlx` 或環境變數 `MODEL_API_KEY`/`OPENAI_API_KEY` |
+| `--api-key` | API key | 環境變數 `MODEL_API_KEY`/`OPENAI_API_KEY`，未設定則必填 |
 | `--prompt`, `-p` | 自訂 prompt 帶入 VL 模型（控制語言／風格） | 無 |
 | `--keywords`, `-k` | 開啟關鍵字 pipeline（可指定數量） | 關閉（指定時預設 15） |
-| `--kw-model` | 關鍵字生成模型（另一個文字模型） | 環境變數 `KEYWORD_MODEL`，未指定則只從描述本地抽取 |
-| `--kw-api` | 關鍵字模型 API URL | 沿用主 `--ollama-api` |
+| `--kw-model` | 關鍵字生成模型（另一個文字模型） | 環境變數 `KEYWORD_MODEL`，未指定則略過關鍵字生成 |
+| `--kw-api` | 關鍵字模型 API URL | 沿用主 `--api` |
 | `--kw-api-key` | 關鍵字模型 API key | 沿用主 `--api-key` |
 | `--detail` | 圖片解析度：`low`, `high`, `auto` | `low` |
 | `--num-ctx` | context length / KV Cache 大小 | `8192` |
 | `--max-image-pixels` | 圖片最大邊長，超過自動縮圖 | `2048` |
+| `--timeout` | API 呼叫超時秒數，超時會記為 error 並繼續下一張 | `300` |
 | `--extensions` | 要處理的副檔名 | `jpg jpeg png webp` |
 | `--result-output` | 結果 JSON 輸出檔案 | `<資料夾>/analysis_result.json` |
 | `--drive-url`, `-d` | Google Drive 資料夾連結（需搭配 `-O`） | 無 |
@@ -115,7 +120,7 @@ python3 write_exif.py ~/photos/analysis_result.json --require-description
 | 引數 | 說明 |
 |------|------|
 | `json_file` | 分析結果 JSON 檔案 |
-| `--field`, `-f` | 要寫入 EXIF 的欄位，可多選，預設 `description`。特殊簡寫：`description`、`keywords`（合併 `keywords_en`+`keywords_zh`）、`path`、`status`；或直接用 JSON 實際欄位名 |
+| `--field`, `-f` | 要寫入 EXIF 的欄位，可多選，預設 `description`。`description`→ImageDescription；其餘→UserComment。特殊簡寫：`keywords`（合併 `keywords_en`+`keywords_zh`）、`path`、`status`；或直接用 JSON 實際欄位名 |
 | `--output`, `-O` | 圖片所在資料夾 |
 | `--require-description` | 只寫入有 description 的圖片 |
 
@@ -123,9 +128,9 @@ python3 write_exif.py ~/photos/analysis_result.json --require-description
 
 | 變數 | 用途 | 預設 |
 |------|------|------|
-| `MODEL_API` | 主模型 API URL | 無（必填或用 `--ollama-api`） |
+| `MODEL_API` | 主模型 API URL | 無（必填或用 `--api`） |
 | `MODEL_NAME` | 主模型名稱 | 無（必填或用 `--model`） |
-| `MODEL_API_KEY` / `OPENAI_API_KEY` | API key | `omlx` |
+| `MODEL_API_KEY` / `OPENAI_API_KEY` | API key | 無（必填或用 `--api-key`） |
 | `KEYWORD_MODEL` | 關鍵字生成模型 | 無 |
 | `KEYWORD_API` | 關鍵字模型 API URL | 沿用 `MODEL_API` |
 | `KEYWORD_API_KEY` | 關鍵字模型 API key | 沿用主 key |
@@ -149,9 +154,9 @@ python3 write_exif.py ~/photos/analysis_result.json --require-description
 ```bash
 # 完整流程：分析 + 寫入描述與關鍵字
 python3 batch_image_analyzer.py ./photos/ \
-  --ollama-api http://localhost:8000/v1 \
+  --api http://localhost:8000/v1 \
   --model Qwen3-VL-4B-Instruct-MLX-4bit \
-  --api-key omlx \
+  --api-key YOUR_API_KEY \
   --keywords 20 \
   --kw-model Qwen3-8B-Instruct-MLX-4bit
 
@@ -159,9 +164,9 @@ python3 write_exif.py ./photos/analysis_result.json -f description keywords
 
 # 只做描述分析，不生成關鍵字
 python3 batch_image_analyzer.py ./photos/ \
-  --ollama-api http://localhost:8000/v1 \
+  --api http://localhost:8000/v1 \
   --model Qwen3-VL-4B-Instruct-MLX-4bit \
-  --api-key omlx
+  --api-key YOUR_API_KEY
 
 python3 write_exif.py ./photos/analysis_result.json
 ```
