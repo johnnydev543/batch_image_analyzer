@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
 EXIF 寫入工具
-從 JSON 分析結果寫入圖片的 EXIF UserComment
+從 JSON 分析結果寫入圖片 EXIF
+
+寫入規則：
+- description 欄位 → ImageDescription (tag 270)
+- 其他欄位（keywords 等）→ UserComment (tag 37510)
 
 用法:
-    # 寫入所有圖片（預設寫入 description）
+    # 寫入所有圖片（預設寫入 description → ImageDescription）
     python3 write_exif.py analysis_result.json
 
     # 指定輸出資料夾
@@ -13,13 +17,13 @@ EXIF 寫入工具
     # 只寫入有描述的圖片
     python3 write_exif.py analysis_result.json --require-description
 
-    # 寫入 description + keywords（keywords 為簡寫，合併 keywords_en + keywords_zh）
+    # 寫入 description（→ImageDescription）+ keywords（→UserComment）
     python3 write_exif.py analysis_result.json -f description keywords
 
-    # 只寫入關鍵字（簡寫）
+    # 只寫入關鍵字到 UserComment（不寫 ImageDescription）
     python3 write_exif.py analysis_result.json -f keywords
 
-    # 直接使用 JSON 實際欄位名
+    # 直接使用 JSON 實際欄位名（都會進 UserComment）
     python3 write_exif.py analysis_result.json -f keywords_en keywords_zh
 
     # 寫入任意 JSON 欄位
@@ -86,16 +90,20 @@ def compose_exif_text(item: dict, fields: list) -> str:
     return "\n\n".join(parts)
 
 
-def write_exif(image_path: str, full_text: str) -> bool:
-    """將指定文字寫入圖片的 EXIF UserComment
+def write_exif(image_path: str, description: str, extra_text: str) -> bool:
+    """將內容寫入圖片 EXIF
+    
+    - description → ImageDescription (tag 270, 0th IFD)
+    - extra_text  → UserComment (tag 37510, Exif sub-IFD)，可為空
     
     處理策略：
     - 載入既有 EXIF 失敗時，使用空白 dict
     - dump 失敗時，重建最小 EXIF 再試一次
     - webp/png 等不支援的格式，改用 PIL 重新儲存寫入
     """
-    comment_bytes = b"UTF-8\x00\x00\x00" + full_text.encode("utf-8")
     now = datetime.now().strftime("%Y:%m:%d %H:%M:%S")
+    desc_bytes = description.encode("utf-8") if description else b""
+    comment_bytes = b"UTF-8\x00\x00\x00" + extra_text.encode("utf-8") if extra_text else b""
 
     ext = image_path.lower().split(".")[-1]
 
@@ -104,7 +112,7 @@ def write_exif(image_path: str, full_text: str) -> bool:
     if ext in ("webp", "png"):
         try:
             from PIL import Image
-            piexif_bytes = _build_exif_bytes(comment_bytes, now)
+            piexif_bytes = _build_exif_bytes(desc_bytes, comment_bytes, now)
             with Image.open(image_path) as im:
                 # png 要保留原格式與模式
                 im.save(image_path, exif=piexif_bytes)
@@ -130,8 +138,18 @@ def write_exif(image_path: str, full_text: str) -> bool:
     if not isinstance(exif_dict.get("Exif"), dict):
         exif_dict["Exif"] = {}
 
-    # UserComment (37510) 屬於 Exif sub-IFD，不是 0th；放錯會 dump 失敗
-    exif_dict["Exif"][37510] = comment_bytes
+    # ImageDescription (270) 屬於 0th IFD
+    if desc_bytes:
+        exif_dict["0th"][270] = desc_bytes
+    else:
+        # 沒要寫就清掉舊的 ImageDescription
+        exif_dict["0th"].pop(270, None)
+    # UserComment (37510) 屬於 Exif sub-IFD
+    if comment_bytes:
+        exif_dict["Exif"][37510] = comment_bytes
+    else:
+        # 沒要寫就清掉舊的 UserComment，避免殘留
+        exif_dict["Exif"].pop(37510, None)
     # DateTime (306) 屬於 0th IFD
     exif_dict["0th"][306] = now.encode("utf-8")
 
@@ -145,8 +163,14 @@ def write_exif(image_path: str, full_text: str) -> bool:
 
     # fallback：重建最小 EXIF（丟掉原本可能有問題的欄位）
     try:
-        fresh = {"0th": {306: now.encode("utf-8")},
-                 "Exif": {37510: comment_bytes},
+        fresh_0th = {306: now.encode("utf-8")}
+        fresh_exif = {}
+        if desc_bytes:
+            fresh_0th[270] = desc_bytes
+        if comment_bytes:
+            fresh_exif[37510] = comment_bytes
+        fresh = {"0th": fresh_0th,
+                 "Exif": fresh_exif,
                  "GPS": {}, "1st": {}, "thumbnail": None}
         exif_bytes = piexif.dump(fresh)
         # 先移除舊 EXIF 再插入，避免重複
@@ -161,11 +185,17 @@ def write_exif(image_path: str, full_text: str) -> bool:
         return False
 
 
-def _build_exif_bytes(comment_bytes: bytes, now: str) -> bytes:
-    """組裝最小 EXIF bytes（供 PIL 寫入 webp 用）"""
+def _build_exif_bytes(desc_bytes: bytes, comment_bytes: bytes, now: str) -> bytes:
+    """組裝最小 EXIF bytes（供 PIL 寫入 webp/png 用）"""
+    ifd0 = {306: now.encode("utf-8")}
+    exif_ifd = {}
+    if desc_bytes:
+        ifd0[270] = desc_bytes
+    if comment_bytes:
+        exif_ifd[37510] = comment_bytes
     exif_dict = {
-        "0th": {306: now.encode("utf-8")},
-        "Exif": {37510: comment_bytes},
+        "0th": ifd0,
+        "Exif": exif_ifd,
         "GPS": {}, "1st": {}, "thumbnail": None,
     }
     return piexif.dump(exif_dict)
@@ -230,16 +260,25 @@ def main():
             continue
 
         # 依 --field 組裝寫入內容
-        full_text = compose_exif_text(item, args.field)
-        if not full_text.strip():
+        # description 欄位單獨寫入 ImageDescription；其餘欄位合併寫入 UserComment
+        desc_fields = [f for f in args.field if f == "description"]
+        extra_fields = [f for f in args.field if f != "description"]
+
+        description_text = compose_exif_text(item, desc_fields)
+        extra_text = compose_exif_text(item, extra_fields)
+
+        if not description_text.strip() and not extra_text.strip():
             print(f"⏭️  略過（指定欄位無內容）: {image_path}")
             skip_count += 1
             continue
 
         print(f"📷 寫入 EXIF: {image_path}")
-        print(f"  📝 欄位: {', '.join(args.field)} | {full_text[:60]}{'...' if len(full_text) > 60 else ''}")
+        if description_text:
+            print(f"  📝 ImageDescription: {description_text[:60]}{'...' if len(description_text) > 60 else ''}")
+        if extra_text:
+            print(f"  📝 UserComment: {extra_text[:60]}{'...' if len(extra_text) > 60 else ''}")
 
-        success = write_exif(image_path, full_text)
+        success = write_exif(image_path, description_text, extra_text)
         if success:
             print(f"  ✅ 完成")
             success_count += 1

@@ -33,13 +33,21 @@ import re
 import json
 import base64
 import shutil
+import sys
 import urllib.request
+import urllib.error
 import argparse
 import subprocess
 from pathlib import Path
 from typing import Optional
 from PIL import Image
 import io
+
+# 強制 stdout 行緩衝，讓進度即時輸出（尤其在 pipe/tee 時）
+try:
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+except Exception:
+    pass
 
 
 # ============ 設定區 ============
@@ -211,12 +219,14 @@ def analyze_image_qwen(
     num_keywords: int = 5,
     detail: str = "low",
     num_ctx: int = DEFAULT_NUM_CTX,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    timeout: int = 300
 ) -> tuple[str, str]:
     """
     Qwen3-VL 模型分析（OpenAI 相容 /v1/chat/completions API）
     測試：若傳入 prompt 會一併送出 text+image，看模型是否遵循語言指令。
     回傳 (內容, 推理過程)
+    timeout: API 呼叫超時秒數
     """
     # 組裝 content：若有 prompt 就把 text 放在 image 前（測試能否控制語言）
     content_list = []
@@ -250,23 +260,34 @@ def analyze_image_qwen(
         headers=headers
     )
 
-    with urllib.request.urlopen(req, timeout=300) as response:
-        raw = response.read().decode("utf-8")
-        result = json.loads(raw)
-        if "error" in result:
-            raise Exception(f"API Error: {result['error']}")
-        # OpenAI 相容格式：choices[0].message.content
-        choices = result.get("choices", [])
-        if choices:
-            msg = choices[0].get("message", {})
-            content = msg.get("content", "") or ""
-            reasoning = msg.get("reasoning_content", "") or msg.get("reasoning", "") or ""
-        else:
-            # fallback：Ollama 原生格式
-            msg = result.get("message", {})
-            content = msg.get("content", "") or ""
-            reasoning = msg.get("reasoning", "") or ""
-        return content, reasoning
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.URLError as e:
+        raise Exception(f"API 連線失敗/超時（{timeout}s）: {e}")
+    except TimeoutError as e:
+        raise Exception(f"API 超時（{timeout}s）: {e}")
+    except Exception as e:
+        # 含 socket.timeout 等
+        if "timed out" in str(e).lower() or "timeout" in str(e).lower():
+            raise Exception(f"API 超時（{timeout}s）: {e}")
+        raise
+
+    result = json.loads(raw)
+    if "error" in result:
+        raise Exception(f"API Error: {result['error']}")
+    # OpenAI 相容格式：choices[0].message.content
+    choices = result.get("choices", [])
+    if choices:
+        msg = choices[0].get("message", {})
+        content = msg.get("content", "") or ""
+        reasoning = msg.get("reasoning_content", "") or msg.get("reasoning", "") or ""
+    else:
+        # fallback：Ollama 原生格式
+        msg = result.get("message", {})
+        content = msg.get("content", "") or ""
+        reasoning = msg.get("reasoning", "") or ""
+    return content, reasoning
 
 
 def generate_keywords_with_model(
@@ -475,14 +496,18 @@ def process_image(
     api_key: Optional[str] = None,
     kw_api: Optional[str] = None,
     kw_model: Optional[str] = None,
-    kw_api_key: Optional[str] = None
+    kw_api_key: Optional[str] = None,
+    timeout: int = 300
 ) -> dict:
     """處理單張圖片
     
     Pipeline:
     1. VL 模型分析圖片 → 產生描述
     2. (可選) 呼叫另一個 text model 從描述生成關鍵字
+    timeout: API 呼叫超時秒數
     """
+    import time as _time
+    t_start = _time.time()
     print(f"\n📷 處理中: {image_path}")
 
     try:
@@ -495,6 +520,8 @@ def process_image(
             # 測試：若使用者指定 --prompt 就帶入，看模型是否遵循語言指令
             prompt = custom_prompt
 
+            print(f"  ⏳ 呼叫 VL 模型 API（timeout={timeout}s）...")
+            t_api = _time.time()
             content, reasoning = analyze_image_qwen(
                 img_b64, mime, ollama_api, model_name,
                 prompt=prompt,
@@ -502,8 +529,10 @@ def process_image(
                 num_keywords=num_keywords,
                 detail=detail,
                 num_ctx=num_ctx,
-                api_key=api_key
+                api_key=api_key,
+                timeout=timeout
             )
+            print(f"  ⏱️  VL 模型耗時 {_time.time()-t_api:.1f}s")
 
             # Qwen3-VL 模式：模型自由生成描述文字
             description = content.strip() if content.strip() else (reasoning or "")
@@ -511,13 +540,17 @@ def process_image(
 
         else:
             # Moondream 模式
+            print(f"  ⏳ 呼叫 Moondream API（timeout={timeout}s）...")
+            t_api = _time.time()
             description = analyze_image_moondream(img_b64, ollama_api, model_name, num_ctx=num_ctx, api_key=api_key)
+            print(f"  ⏱️  Moondream 耗時 {_time.time()-t_api:.1f}s")
             print(f"  📝 描述: {description[:80]}{'...' if len(description) > 80 else ''}")
 
         # 關鍵字 pipeline：呼叫另一個 text model 生成關鍵字
         if use_keywords:
             if kw_model:
                 print(f"  🏷️  呼叫關鍵字模型 {kw_model} 生成關鍵字...")
+                t_kw = _time.time()
                 zh_kw, en_kw = generate_keywords_with_model(
                     description=description,
                     api_url=kw_api or ollama_api,
@@ -526,12 +559,14 @@ def process_image(
                     api_key=kw_api_key or api_key,
                     num_ctx=num_ctx
                 )
+                print(f"  ⏱️  關鍵字模型耗時 {_time.time()-t_kw:.1f}s")
             else:
                 print(f"  ⚠️  未指定關鍵字模型（--kw-model），略過關鍵字生成")
 
             print(f"      中文標籤: {', '.join(zh_kw) if zh_kw else '無'}")
             print(f"      英文標籤: {', '.join(en_kw) if en_kw else '無'}")
 
+        print(f"  ✅ 本張總耗時 {_time.time()-t_start:.1f}s")
         return {
             "path": image_path,
             "description": description,
@@ -596,6 +631,8 @@ def main():
                         help=f"Ollama context length / KV Cache 大小 (預設: {DEFAULT_NUM_CTX}，降低可減少記憶體使用)")
     parser.add_argument("--max-image-pixels", type=int, default=DEFAULT_MAX_IMAGE_PIXELS,
                         help=f"圖片最大邊長，超過會自動縮圖 (預設: {DEFAULT_MAX_IMAGE_PIXELS})")
+    parser.add_argument("--timeout", type=int, default=300,
+                        help="API 呼叫超時秒數（預設: 300）。若某張圖卡住太久可調小，超時會記為 error 並繼續下一張")
     args = parser.parse_args()
 
     model_type = detect_model_type(args.model)
@@ -632,6 +669,7 @@ def main():
         print(f"   圖片解析度: {args.detail}")
     print(f"   Context Length: {args.num_ctx}")
     print(f"   圖片最大邊長: {args.max_image_pixels}px")
+    print(f"   API 超時: {args.timeout}s")
 
     # Google Drive 模式
     if args.drive_url:
@@ -668,9 +706,35 @@ def main():
         return
 
     # 處理每張圖片
+    output_file = args.result_output
+    # 增量寫入：載入既有結果（續跑用），以「path」為索引
     results = []
+    done_paths = set()
+    if os.path.exists(output_file):
+        try:
+            with open(output_file, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            if isinstance(existing, list):
+                results = existing
+                done_paths = {r.get("path") for r in existing if r.get("path")}
+                if done_paths:
+                    print(f"📦 已有 {len(done_paths)} 筆結果，將跳過已完成圖片並續跑")
+        except Exception:
+            pass
+
+    def _save_results():
+        """增量寫入結果檔（每張完成即寫，避免中斷遺失）"""
+        tmp = output_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, output_file)
+
     for i, img_path in enumerate(images, 1):
-        print(f"\n[{i}/{len(images)}]", end="")
+        sp = str(img_path)
+        if sp in done_paths:
+            print(f"\n[{i}/{len(images)}] ⏭️  已完成，跳過: {sp}")
+            continue
+        print(f"\n[{i}/{len(images)}]", end="", flush=True)
         result = process_image(
             str(img_path),
             ollama_api=args.ollama_api,
@@ -685,15 +749,13 @@ def main():
             api_key=args.api_key,
             kw_api=args.kw_api,
             kw_model=args.kw_model,
-            kw_api_key=args.kw_api_key
+            kw_api_key=args.kw_api_key,
+            timeout=args.timeout
         )
         results.append(result)
+        _save_results()  # 每張完成即寫檔
 
-    # 輸出結果
-    output_file = args.result_output
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
-
+    # 最終結果檔已隨時寫入
     success_count = sum(1 for r in results if r["status"] == "success")
     print(f"\n{'='*50}")
     print(f"✅ 完成！成功: {success_count}/{len(results)}")
